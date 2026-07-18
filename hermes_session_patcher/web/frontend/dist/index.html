@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hermes Session Patcher</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", sans-serif; background: #1a1a1a; color: #e0e0e0; min-height: 100vh; }
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    .navbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px;
+      background: linear-gradient(135deg, #1e1e2d 0%, #252540 100%);
+      border-bottom: 1px solid #00A1E4; box-shadow: 0 2px 10px rgba(0,161,228,.2); }
+    .navbar-title { color: #fff; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+    .navbar-title .logo { font-size: 24px; }
+    .navbar-right { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #9ab; }
+    .navbar-right code { background: #1a1a1a; padding: 2px 6px; border-radius: 4px; color: #00ff88; }
+    .content { display: grid; grid-template-columns: 360px 1fr; gap: 8px; padding: 8px; overflow: hidden; flex: 1; min-height: 0; }
+    .sidebar { background: #252525; border-radius: 8px; overflow-y: auto; }
+    .main-panel { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+    .main-panel > .panel-body { overflow-y: auto; padding: 10px 12px; flex: 1; }
+    .main-panel .action-bar { padding: 8px 12px; border-top: 1px solid #404040; background: #252525; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .session-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #333; transition: background .12s; }
+    .session-item:hover { background: #2d2d3d; }
+    .session-item.active { background: #303050; border-left: 3px solid #00A1E4; }
+    .session-item .title-row { display: flex; justify-content: space-between; align-items: center; }
+    .session-item .title { color: #ddd; font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .session-item .refusal-badge { background: #B22222; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .session-item .meta { font-size: 11px; color: #888; margin-top: 4px; }
+    .change-card { background: #2d2d2d; border: 1px solid #404040; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
+    .change-card .change-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; }
+    .change-card .change-header .tag { background: #444; color: #fff; padding: 2px 8px; border-radius: 4px; }
+    .change-card .change-header .tag.replace { background: #B22222; }
+    .change-card .change-header .tag.remove_thinking { background: #5a3; }
+    .change-card .field-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+    .change-card .original-content { background: rgba(178,34,34,.12); border-left: 3px solid #B22222; padding: 8px; margin: 4px 0; font-size: 12px; white-space: pre-wrap; max-height: 120px; overflow-y: auto; color: #faa; }
+    .change-card .replacement-content { background: rgba(0,180,0,.12); border-left: 3px solid #2a2; padding: 8px; margin-top: 4px; font-size: 12px; white-space: pre-wrap; color: #afa; }
+    .empty-state { padding: 40px; text-align: center; color: #666; }
+    .panel-header { padding: 10px 12px; background: #2d2d2d; border-bottom: 1px solid #404040; font-size: 14px; color: #ccf; }
+    .backup-card { background: #2d2d2d; padding: 8px 12px; border-radius: 4px; margin: 4px 0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+    button { background: #00A1E4; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; transition: opacity .12s; }
+    button:hover { opacity: .88; }
+    button:disabled { background: #444; cursor: not-allowed; opacity: .5; }
+    button.danger { background: #B22222; }
+    button.success { background: #2a9b3d; }
+    button.warn { background: #cc8800; }
+    input[type=checkbox] { vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+  const { createApp, ref, computed, onMounted, reactive } = Vue;
+  const API = '/api';
+
+  const App = {
+    setup() {
+      const sessions = ref([]);
+      const selectedSession = ref(null);
+      const activeSessionId = ref(null);
+      const changes = ref([]);
+      const hasChanges = ref(false);
+      const ctfStatus = ref({ installed: false, config_yaml: false, soul_md: false });
+      const backups = ref([]);
+      const selectedMessageIds = ref(new Set());
+      const loading = ref(false);
+      const version = ref('');
+      const errMsg = ref('');
+      const filterOnlyRefusal = ref(true);
+
+      async function fetchJSON(url, opts={}) {
+        try { const r = await fetch(API + url, { headers: {'Content-Type': 'application/json', ...(opts.headers||{})}, ...opts });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        } catch(e) { errMsg.value = String(e); throw e; }
+      }
+      async function loadSessions() {
+        loading.value = true;
+        try { const r = await fetchJSON('/sessions?skip_refusal_check=' + !filterOnlyRefusal.value);
+          sessions.value = r.sessions || [];
+        } finally { loading.value = false; }
+      }
+      async function loadVersion() {
+        try { const v = await fetchJSON('/version'); version.value = v.version; } catch(e) {}
+      }
+      async function loadCTF() {
+        try { ctfStatus.value = await fetchJSON('/ctf/status'); } catch(e) {}
+      }
+      async function loadBackups() {
+        try { backups.value = await fetchJSON('/backups'); } catch(e) {}
+      }
+      async function selectSession(s) {
+        activeSessionId.value = s.session_id; selectedSession.value = s; selectedMessageIds.value = new Set();
+        try { loading.value = true;
+          const r = await fetchJSON('/sessions/' + encodeURIComponent(s.session_id) + '/preview?clean_reasoning=true');
+          changes.value = r.changes || []; hasChanges.value = r.has_changes;
+          changes.value.forEach(c => selectedMessageIds.value.add(c.message_id));
+        } finally { loading.value = false; }
+      }
+      function toggleSelect(msgId) {
+        if (selectedMessageIds.value.has(msgId)) selectedMessageIds.value.delete(msgId);
+        else selectedMessageIds.value.add(msgId);
+      }
+      async function doPatch() {
+        if (!activeSessionId.value || !confirm('确认清理会话 "' + (selectedSession.value?.title||'') + '" 中的 ' + changes.value.length + ' 处修改？')) return;
+        try { loading.value = true;
+          const ids = Array.from(selectedMessageIds.value);
+          await fetchJSON('/sessions/patch', { method: 'POST', body: JSON.stringify({
+            session_id: activeSessionId.value, mock_response: null, clean_reasoning: true,
+            selected_message_ids: ids.length ? ids : null, create_backup: true }) });
+          errMsg.value = '✓ 清理完成'; await loadSessions(); await loadBackups();
+        } catch(e) {} finally { loading.value = false; }
+      }
+      async function toggleCTF() {
+        try { loading.value = true;
+          if (ctfStatus.value.installed) await fetchJSON('/ctf/uninstall', { method: 'POST' });
+          else await fetchJSON('/ctf/install', { method: 'POST', body: JSON.stringify({ mode: 'append' }) });
+          await loadCTF();
+        } catch(e) {} finally { loading.value = false; }
+      }
+      async function restoreBackup(b) {
+        const sid = prompt('输入要还原的 session_id（留空表示还原整个 state.db）:', b.session_id || '');
+        if (sid === null) return;
+        if (!confirm('确认从备份 ' + b.filename + ' 还原？这会覆盖现有数据。')) return;
+        try { loading.value = true;
+          const url = '/backups/' + encodeURIComponent(b.filename) + '/restore' + (sid ? '?session_id=' + encodeURIComponent(sid) : '');
+          await fetchJSON(url, { method: 'POST' }); errMsg.value = '✓ 还原成功';
+          await loadSessions(); await loadBackups();
+        } catch(e) {} finally { loading.value = false; }
+      }
+      const selectedCount = computed(() => Array.from(selectedMessageIds.value).filter(id => changes.value.some(c => c.message_id === id)).length);
+
+      onMounted(async () => { await loadVersion(); await Promise.all([loadSessions(), loadCTF(), loadBackups()]); });
+
+      return { sessions, selectedSession, activeSessionId, changes, hasChanges, ctfStatus, backups,
+        selectedMessageIds, loading, version, errMsg, filterOnlyRefusal, selectedCount,
+        loadSessions, selectSession, toggleSelect, doPatch, toggleCTF, restoreBackup };
+    },
+    template: `
+    <div class="app">
+      <div class="navbar">
+        <div><span class="navbar-title"><span class="logo">🐱</span> Hermes Session Patcher</span></div>
+        <div class="navbar-right">
+          <button :class="ctfStatus.installed ? 'danger' : 'success'" @click="toggleCTF">
+            {{ ctfStatus.installed ? 'CTF: 已启用 (点击卸载)' : 'CTF: 未启用 (点击安装)' }}
+          </button>
+          <code>v{{ version }}</code>
+        </div>
+      </div>
+      <div class="content">
+        <div class="sidebar">
+          <div style="padding:10px;font-size:13px;color:#88a;display:flex;justify-content:space-between;align-items:center;">
+            <span>会话列表 ({{ sessions.filter(s => s.has_refusal).length }}/{{ sessions.length }} 含拒绝)</span>
+            <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+              <input type="checkbox" v-model="filterOnlyRefusal" @change="loadSessions"/> 只看拒绝
+            </label>
+          </div>
+          <div v-for="s in sessions" :key="s.session_id" class="session-item"
+            :class="{active: activeSessionId === s.session_id}" @click="selectSession(s)">
+            <div class="title-row">
+              <span class="title">{{ s.title || s.session_id }}</span>
+              <span v-if="s.has_refusal" class="refusal-badge">⚠️ {{ s.refusal_count }}</span>
+            </div>
+            <div class="meta">{{ s.started_at_str }} | {{ s.source }} | msgs={{ s.message_count }}{{ s.model ? ' | ' + s.model : '' }}</div>
+          </div>
+          <div v-if="!sessions.length" class="empty-state">{{ loading ? '加载中…' : '暂无会话' }}</div>
+        </div>
+        <div class="main-panel">
+          <div class="panel-header">
+            <span v-if="selectedSession">📋 {{ selectedSession.title || selectedSession.session_id }}
+              <span style="color:#666;margin-left:10px;font-size:12px;">{{ activeSessionId }}</span></span>
+            <span v-else>← 选择左侧会话查看详情</span>
+          </div>
+          <div class="panel-body">
+            <div v-if="errMsg" style="color:#8f8;margin-bottom:8px;">{{ errMsg }}</div>
+            <div v-if="!activeSessionId" class="empty-state">选择左侧会话查看详情</div>
+            <div v-else-if="!changes.length" class="empty-state">该会话无需要清理的拒绝回复 ✨</div>
+            <div v-else>
+              <div v-for="c in changes" :key="c.message_id" class="change-card">
+                <div class="change-header">
+                  <span><input type="checkbox" :checked="selectedMessageIds.has(c.message_id)" @change="toggleSelect(c.message_id)" />
+                    <span style="margin-left:6px;">msg #{{ c.message_id }}</span></span>
+                  <span class="tag" :class="c.change_type">{{ c.change_type === 'replace' ? '替换' : '移除推理' }}</span>
+                </div>
+                <template v-if="c.change_type === 'replace'">
+                  <div class="field-label">原文（拒绝回复）：</div>
+                  <div class="original-content">{{ c.original }}</div>
+                  <div class="field-label">替换为：</div>
+                  <div class="replacement-content">{{ c.replacement }}</div>
+                </template>
+                <template v-else><div style="color:#8c8;font-size:12px;">将清除 reasoning / thinking 字段</div></template>
+              </div>
+            </div>
+          </div>
+          <div class="action-bar">
+            <button @click="doPatch" :disabled="!changes.length || loading">
+              🧹 执行清理 ({{ selectedCount }} 处)
+            </button>
+            <button class="warn" @click="loadBackups" :disabled="loading">🔄 刷新备份列表</button>
+            <span style="flex:1;"></span>
+            <span style="font-size:12px;color:#888;">共 {{ backups.length }} 个备份</span>
+          </div>
+        </div>
+      </div>
+      <div style="background:#252525;padding:10px 16px;border-top:1px solid #404040;">
+        <details>
+          <summary style="cursor:pointer;font-size:13px;color:#9ab;">📦 备份管理 ({{ backups.length }})</summary>
+          <div style="margin-top:8px;max-height:200px;overflow-y:auto;">
+            <div v-for="b in backups" :key="b.filename" class="backup-card">
+              <span>{{ b.filename }} | {{ (b.size/1024/1024).toFixed(1) }} MB {{ b.session_id ? '| ' + b.session_id : '' }}</span>
+              <button class="warn" @click="restoreBackup(b)" :disabled="loading">还原</button>
+            </div>
+            <div v-if="!backups.length" style="font-size:12px;color:#666;padding:8px;">暂无备份</div>
+          </div>
+        </details>
+      </div>
+    </div>`
+  };
+  createApp(App).mount('#app');
+  </script>
+</body>
+</html>

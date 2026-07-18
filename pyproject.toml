@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-session-patcher"
+version = "0.1.0"
+description = "Hermes Agent 会话清理器 & CTF 提示词注入工具 — Hermes 版 codex-session-patcher"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "adapted from ryfineZ/codex-session-patcher"}]
+dependencies = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "pydantic>=2.0",
+    "httpx>=0.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+hermes-patcher = "hermes_session_patcher.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hermes_session_patcher*"]
+
+[tool.setuptools.package-data]
+"hermes_session_patcher" = ["web/frontend/dist/**"]
