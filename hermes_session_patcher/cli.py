@@ -181,8 +181,8 @@ def main():
 
     # install-ctf
     p_install = sub.add_parser("install-ctf", help="安装 CTF 安全测试模式")
-    p_install.add_argument("--mode", choices=["append", "replace"], default="append",
-                          help="append 追加到 system_prompt (默认)，replace 完全替换")
+    p_install.add_argument("--mode", choices=["append", "replace", "godmode", "godmode_v2"], default="append",
+                          help="append 追加(默认) | replace 完全替换 | godmode 激进版(⚠️易被过滤挂起) | godmode_v2 脱敏版(实测有效,推荐)")
     p_install.set_defaults(func=cmd_install_ctf)
 
     # uninstall-ctf
