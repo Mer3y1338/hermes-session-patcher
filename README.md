@@ -235,6 +235,10 @@ hermes-patcher ctf-status                      # = unrestricted-status
 - [Jia-Ethan/codex-keysmith](https://github.com/Jia-Ethan/codex-keysmith) — v2.0 重构的设计哲学来源：重定义式、Local fixture、处方式模板、层独立
 - Pliny 的 GODMODE OG — divider 胁迫式的原始技术参考
 
+## 社区宣讲稿
+
+`docs/community-post-zh.md` — 按 Linux.do 开源推广帖风格写的项目介绍（含三层检测架构说明、4 种不能破限的情况、实测效果对比），适合发到社区讨论。
+
 ## 许可证
 
 MIT
